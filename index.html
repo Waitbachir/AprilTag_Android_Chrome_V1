@@ -43,10 +43,11 @@ const canvas=document.getElementById('overlay'),ctx=canvas.getContext('2d');
 const processing=document.getElementById('processing'),pctx=processing.getContext('2d',{willReadFrequently:true});
 const statusEl=document.getElementById('statusLine'),dictionaryEl=document.getElementById('dictionary'),markerSizeEl=document.getElementById('markerSize');
 let stream=null,running=false,detector=null,frames=0,lastFps=performance.now(),lastDetection=0;
+const tracks=new Map();
 
 function resize(){const r=canvas.getBoundingClientRect(),d=Math.min(devicePixelRatio||1,2);canvas.width=Math.round(r.width*d);canvas.height=Math.round(r.height*d);ctx.setTransform(d,0,0,d,0,0)}
 function setStatus(text,kind=''){statusEl.textContent=text;statusEl.className='status '+kind}
-function makeDetector(){detector=new AR.Detector({dictionaryName:dictionaryEl.value});setStatus('Détection active','ok')}
+function makeDetector(){tracks.clear();detector=new AR.Detector({dictionaryName:dictionaryEl.value});setStatus('Détection active','ok')}
 window.addEventListener('resize',resize);dictionaryEl.addEventListener('change',makeDetector);
 
 async function startCamera(){
@@ -64,25 +65,49 @@ async function startCamera(){
   else setStatus('Erreur : '+e.message,'err');
  }
 }
-function stopCamera(){running=false;if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}video.srcObject=null;ctx.clearRect(0,0,canvas.clientWidth,canvas.clientHeight);setStatus('Arrêtée')}
+function stopCamera(){running=false;tracks.clear();if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}video.srcObject=null;ctx.clearRect(0,0,canvas.clientWidth,canvas.clientHeight);setStatus('Arrêtée')}
 function centerOf(marker){return marker.corners.reduce((p,c)=>({x:p.x+c.x/4,y:p.y+c.y/4}),{x:0,y:0})}
 function markerSide(marker){let total=0;for(let i=0;i<4;i++){const a=marker.corners[i],b=marker.corners[(i+1)%4];total+=Math.hypot(b.x-a.x,b.y-a.y)}return total/4}
+function updateTracks(markers,now){
+ markers.forEach(marker=>{
+  const target=marker.corners.map(p=>({x:p.x,y:p.y})),track=tracks.get(marker.id);
+  if(track){track.target=target;track.seen=now}else tracks.set(marker.id,{id:marker.id,current:target.map(p=>({...p})),target,seen:now});
+ });
+ for(const[id,track]of tracks)if(now-track.seen>300)tracks.delete(id);
+}
+function smoothTracks(now){
+ const result=[];
+ for(const track of tracks.values()){
+  if(now-track.seen>300)continue;
+  for(let i=0;i<4;i++){track.current[i].x+=(track.target[i].x-track.current[i].x)*0.28;track.current[i].y+=(track.target[i].y-track.current[i].y)*0.28}
+  result.push({id:track.id,corners:track.current});
+ }
+ return result.sort((a,b)=>a.id-b.id);
+}
 function screenTransform(){const vw=processing.width,vh=processing.height,cw=canvas.clientWidth,ch=canvas.clientHeight,scale=Math.max(cw/vw,ch/vh);return{scale,ox:(cw-vw*scale)/2,oy:(ch-vh*scale)/2}}
 function pointToScreen(p,t){return{x:t.ox+p.x*t.scale,y:t.oy+p.y*t.scale}}
 function draw(markers){
  ctx.clearRect(0,0,canvas.clientWidth,canvas.clientHeight);const t=screenTransform(),centers=[];ctx.lineJoin='round';ctx.font='bold 16px Arial';
  markers.forEach(marker=>{
-  const corners=marker.corners.map(p=>pointToScreen(p,t)),center=pointToScreen(centerOf(marker),t);centers.push({id:marker.id,side:markerSide(marker)*t.scale,...center});
+  const center=pointToScreen(centerOf(marker),t);centers.push({id:marker.id,side:markerSide(marker)*t.scale,corners:marker.corners.map(p=>pointToScreen(p,t)),...center});
+ });
+ const markerSizeCm=Math.max(0.1,Number(markerSizeEl.value)||5);
+ for(let i=0;i<centers.length;i++)for(let j=i+1;j<centers.length;j++){
+  const a=centers[i],b=centers[j],distancePx=Math.hypot(b.x-a.x,b.y-a.y),referenceSide=(a.side+b.side)/2,distanceCm=distancePx/referenceSide*markerSizeCm;
+  ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.strokeStyle='#ffd400aa';ctx.lineWidth=2.5;ctx.stroke();
+  const label=distanceCm.toFixed(1)+' cm',mx=(a.x+b.x)/2,my=(a.y+b.y)/2,w=ctx.measureText(label).width+10;ctx.fillStyle='#000c';ctx.fillRect(mx-w/2,my-21,w,20);ctx.fillStyle='#ffd400';ctx.fillText(label,mx-w/2+5,my-6);
+ }
+ centers.forEach(marker=>{
+  const corners=marker.corners,center=marker;
   ctx.beginPath();ctx.moveTo(corners[0].x,corners[0].y);corners.slice(1).forEach(p=>ctx.lineTo(p.x,p.y));ctx.closePath();ctx.strokeStyle='#00ff88';ctx.lineWidth=4;ctx.stroke();
   ctx.fillStyle='#00ff88';ctx.beginPath();ctx.arc(center.x,center.y,6,0,Math.PI*2);ctx.fill();
   const label='ID '+marker.id,w=ctx.measureText(label).width+12;ctx.fillStyle='#000c';ctx.fillRect(corners[0].x,corners[0].y-26,w,24);ctx.fillStyle='#fff';ctx.fillText(label,corners[0].x+6,corners[0].y-8);
  });
- let distanceText='—';
- if(centers.length>=2){const a=centers[0],b=centers[1],distancePx=Math.hypot(b.x-a.x,b.y-a.y),referenceSide=(a.side+b.side)/2,markerSizeCm=Math.max(0.1,Number(markerSizeEl.value)||5),distanceCm=distancePx/referenceSide*markerSizeCm;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.strokeStyle='#ffd400';ctx.lineWidth=3;ctx.stroke();const label=distanceCm.toFixed(1)+' cm',mx=(a.x+b.x)/2,my=(a.y+b.y)/2,w=ctx.measureText(label).width+12;ctx.fillStyle='#000d';ctx.fillRect(mx-w/2,my-24,w,24);ctx.fillStyle='#ffd400';ctx.fillText(label,mx-w/2+6,my-7);distanceText=label}
 }
 function loop(now){
  if(!running)return;
- if(video.readyState>=2&&now-lastDetection>=80){lastDetection=now;pctx.drawImage(video,0,0,processing.width,processing.height);try{draw(detector.detect(pctx.getImageData(0,0,processing.width,processing.height)))}catch(e){setStatus('Erreur de détection','err')}frames++}
+ if(video.readyState>=2&&now-lastDetection>=50){lastDetection=now;pctx.drawImage(video,0,0,processing.width,processing.height);try{updateTracks(detector.detect(pctx.getImageData(0,0,processing.width,processing.height)),now)}catch(e){setStatus('Erreur de détection','err')}frames++}
+ draw(smoothTracks(now));
  if(now-lastFps>=1000){frames=0;lastFps=now}requestAnimationFrame(loop);
 }
 document.getElementById('start').onclick=startCamera;document.getElementById('stop').onclick=stopCamera;
