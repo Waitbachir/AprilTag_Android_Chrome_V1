@@ -10,10 +10,12 @@ body{overflow:hidden}#app{height:100%;display:flex;flex-direction:column}
 .status{font-size:12px}.ok{color:#8ee28e}.warn{color:#ffd166}.err{color:#ff6b6b}
 #view{position:relative;flex:1;background:#000;min-height:0}video{width:100%;height:100%;object-fit:cover;display:block}
 #overlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
-#controls{padding:10px;background:#181b21;display:grid;grid-template-columns:1fr 1fr;gap:8px}
-button,select{border:0;border-radius:9px;padding:12px 8px;font-weight:bold;font-size:14px}
+#controls{flex:0 0 140px;height:140px;padding:10px;background:#181b21;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:44px 44px 16px;gap:8px;overflow:hidden}
+button,select,input{border:0;border-radius:9px;padding:10px 8px;font-weight:bold;font-size:14px;min-width:0}
 button{background:#2d6cdf;color:#fff}button.secondary{background:#343941}button:disabled{opacity:.5}
-select{grid-column:1/-1;background:#292e37;color:#fff}
+select{background:#292e37;color:#fff}
+#markerSizeBox{height:44px;border-radius:9px;background:#292e37;color:#fff;display:flex;align-items:center;padding:4px 8px;gap:6px;font-size:12px;white-space:nowrap}
+#markerSize{width:58px;height:34px;background:#fff;color:#111;text-align:center;padding:4px}
 #statusLine{grid-column:1/-1;height:16px;line-height:16px;overflow:hidden;text-align:center;white-space:nowrap}#processing{display:none}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/js-aruco2@2.0.0/src/cv.js"></script>
@@ -31,6 +33,7 @@ select{grid-column:1/-1;background:#292e37;color:#fff}
 <div id="controls">
 <button id="start">📷 Démarrer</button><button id="stop" class="secondary">⏹ Arrêter</button>
 <select id="dictionary" aria-label="Dictionnaire ArUco"><option value="ARUCO_4X4_1000">ArUco 4×4 (OpenCV)</option><option value="ARUCO_5X5_1000">ArUco 5×5 (OpenCV)</option><option value="ARUCO_6X6_1000">ArUco 6×6 (OpenCV)</option><option value="ARUCO_7X7_1000">ArUco 7×7 (OpenCV)</option></select>
+<label id="markerSizeBox">Côté : <input id="markerSize" type="number" value="5" min="0.1" max="100" step="0.1"> cm</label>
 <span id="statusLine" class="status">Prêt</span>
 </div>
 </div>
@@ -38,7 +41,7 @@ select{grid-column:1/-1;background:#292e37;color:#fff}
 const video=document.getElementById('video');
 const canvas=document.getElementById('overlay'),ctx=canvas.getContext('2d');
 const processing=document.getElementById('processing'),pctx=processing.getContext('2d',{willReadFrequently:true});
-const statusEl=document.getElementById('statusLine'),dictionaryEl=document.getElementById('dictionary');
+const statusEl=document.getElementById('statusLine'),dictionaryEl=document.getElementById('dictionary'),markerSizeEl=document.getElementById('markerSize');
 let stream=null,running=false,detector=null,frames=0,lastFps=performance.now(),lastDetection=0;
 
 function resize(){const r=canvas.getBoundingClientRect(),d=Math.min(devicePixelRatio||1,2);canvas.width=Math.round(r.width*d);canvas.height=Math.round(r.height*d);ctx.setTransform(d,0,0,d,0,0)}
@@ -63,18 +66,19 @@ async function startCamera(){
 }
 function stopCamera(){running=false;if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}video.srcObject=null;ctx.clearRect(0,0,canvas.clientWidth,canvas.clientHeight);setStatus('Arrêtée')}
 function centerOf(marker){return marker.corners.reduce((p,c)=>({x:p.x+c.x/4,y:p.y+c.y/4}),{x:0,y:0})}
+function markerSide(marker){let total=0;for(let i=0;i<4;i++){const a=marker.corners[i],b=marker.corners[(i+1)%4];total+=Math.hypot(b.x-a.x,b.y-a.y)}return total/4}
 function screenTransform(){const vw=processing.width,vh=processing.height,cw=canvas.clientWidth,ch=canvas.clientHeight,scale=Math.max(cw/vw,ch/vh);return{scale,ox:(cw-vw*scale)/2,oy:(ch-vh*scale)/2}}
 function pointToScreen(p,t){return{x:t.ox+p.x*t.scale,y:t.oy+p.y*t.scale}}
 function draw(markers){
  ctx.clearRect(0,0,canvas.clientWidth,canvas.clientHeight);const t=screenTransform(),centers=[];ctx.lineJoin='round';ctx.font='bold 16px Arial';
  markers.forEach(marker=>{
-  const corners=marker.corners.map(p=>pointToScreen(p,t)),center=pointToScreen(centerOf(marker),t);centers.push({id:marker.id,...center});
+  const corners=marker.corners.map(p=>pointToScreen(p,t)),center=pointToScreen(centerOf(marker),t);centers.push({id:marker.id,side:markerSide(marker)*t.scale,...center});
   ctx.beginPath();ctx.moveTo(corners[0].x,corners[0].y);corners.slice(1).forEach(p=>ctx.lineTo(p.x,p.y));ctx.closePath();ctx.strokeStyle='#00ff88';ctx.lineWidth=4;ctx.stroke();
   ctx.fillStyle='#00ff88';ctx.beginPath();ctx.arc(center.x,center.y,6,0,Math.PI*2);ctx.fill();
   const label='ID '+marker.id,w=ctx.measureText(label).width+12;ctx.fillStyle='#000c';ctx.fillRect(corners[0].x,corners[0].y-26,w,24);ctx.fillStyle='#fff';ctx.fillText(label,corners[0].x+6,corners[0].y-8);
  });
  let distanceText='—';
- if(centers.length>=2){const a=centers[0],b=centers[1],distance=Math.hypot(b.x-a.x,b.y-a.y);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.strokeStyle='#ffd400';ctx.lineWidth=3;ctx.stroke();const label=distance.toFixed(0)+' px',mx=(a.x+b.x)/2,my=(a.y+b.y)/2,w=ctx.measureText(label).width+12;ctx.fillStyle='#000d';ctx.fillRect(mx-w/2,my-24,w,24);ctx.fillStyle='#ffd400';ctx.fillText(label,mx-w/2+6,my-7);distanceText=label}
+ if(centers.length>=2){const a=centers[0],b=centers[1],distancePx=Math.hypot(b.x-a.x,b.y-a.y),referenceSide=(a.side+b.side)/2,markerSizeCm=Math.max(0.1,Number(markerSizeEl.value)||5),distanceCm=distancePx/referenceSide*markerSizeCm;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.strokeStyle='#ffd400';ctx.lineWidth=3;ctx.stroke();const label=distanceCm.toFixed(1)+' cm',mx=(a.x+b.x)/2,my=(a.y+b.y)/2,w=ctx.measureText(label).width+12;ctx.fillStyle='#000d';ctx.fillRect(mx-w/2,my-24,w,24);ctx.fillStyle='#ffd400';ctx.fillText(label,mx-w/2+6,my-7);distanceText=label}
 }
 function loop(now){
  if(!running)return;
