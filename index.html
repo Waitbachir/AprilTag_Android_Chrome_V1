@@ -7,17 +7,14 @@
 <style>
 *{box-sizing:border-box}html,body{margin:0;height:100%;background:#101216;color:#fff;font-family:Arial,sans-serif}
 body{overflow:hidden}#app{height:100%;display:flex;flex-direction:column}
-header{padding:10px 12px;background:#181b21;display:flex;justify-content:space-between;align-items:center}
-h1{font-size:16px;margin:0}.status{font-size:12px}.ok{color:#8ee28e}.warn{color:#ffd166}.err{color:#ff6b6b}
+.status{font-size:12px}.ok{color:#8ee28e}.warn{color:#ffd166}.err{color:#ff6b6b}
 #view{position:relative;flex:1;background:#000;min-height:0}video{width:100%;height:100%;object-fit:cover;display:block}
 #overlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
-#panel{position:absolute;top:10px;left:10px;right:10px;padding:10px;border-radius:10px;background:#000b;font-size:13px;line-height:1.5}
 #controls{padding:10px;background:#181b21;display:grid;grid-template-columns:1fr 1fr;gap:8px}
 button,select{border:0;border-radius:9px;padding:12px 8px;font-weight:bold;font-size:14px}
 button{background:#2d6cdf;color:#fff}button.secondary{background:#343941}button:disabled{opacity:.5}
 select{grid-column:1/-1;background:#292e37;color:#fff}
-#info{padding:8px 12px;background:#0c0e12;font-size:12px;max-height:130px;overflow:auto}
-.tag{padding:5px 0;border-bottom:1px solid #292d35}#processing{display:none}
+#statusLine{grid-column:1/-1;height:16px;line-height:16px;overflow:hidden;text-align:center;white-space:nowrap}#processing{display:none}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/js-aruco2@2.0.0/src/cv.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/js-aruco2@2.0.0/src/aruco.js"></script>
@@ -28,44 +25,43 @@ select{grid-column:1/-1;background:#292e37;color:#fff}
 </head>
 <body>
 <div id="app">
-<header><h1>Suivi ArUco — Android Chrome</h1><span id="status" class="status">Prêt</span></header>
 <div id="view">
 <video id="video" autoplay muted playsinline></video><canvas id="overlay"></canvas><canvas id="processing"></canvas>
-<div id="panel"><b>Détection ArUco</b><br>État : <span id="cameraState">arrêtée</span><br>Marqueurs : <span id="count">0</span> · <span id="fps">0 FPS</span><br>Distance entre centres : <span id="dist">—</span></div>
 </div>
 <div id="controls">
 <button id="start">📷 Démarrer</button><button id="stop" class="secondary">⏹ Arrêter</button>
 <select id="dictionary" aria-label="Dictionnaire ArUco"><option value="ARUCO_4X4_1000">ArUco 4×4 (OpenCV)</option><option value="ARUCO_5X5_1000">ArUco 5×5 (OpenCV)</option><option value="ARUCO_6X6_1000">ArUco 6×6 (OpenCV)</option><option value="ARUCO_7X7_1000">ArUco 7×7 (OpenCV)</option></select>
+<span id="statusLine" class="status">Prêt</span>
 </div>
-<div id="info"><div id="message">Choisis le même dictionnaire que celui utilisé pour générer tes marqueurs, puis démarre la caméra.</div><div id="tags"></div></div>
 </div>
 <script>
 const video=document.getElementById('video');
 const canvas=document.getElementById('overlay'),ctx=canvas.getContext('2d');
 const processing=document.getElementById('processing'),pctx=processing.getContext('2d',{willReadFrequently:true});
-const statusEl=document.getElementById('status'),stateEl=document.getElementById('cameraState'),dictionaryEl=document.getElementById('dictionary');
+const statusEl=document.getElementById('statusLine'),dictionaryEl=document.getElementById('dictionary');
 let stream=null,running=false,detector=null,frames=0,lastFps=performance.now(),lastDetection=0;
 
 function resize(){const r=canvas.getBoundingClientRect(),d=Math.min(devicePixelRatio||1,2);canvas.width=Math.round(r.width*d);canvas.height=Math.round(r.height*d);ctx.setTransform(d,0,0,d,0,0)}
-function makeDetector(){detector=new AR.Detector({dictionaryName:dictionaryEl.value});document.getElementById('message').textContent='Recherche des marqueurs '+dictionaryEl.options[dictionaryEl.selectedIndex].text+'…'}
+function setStatus(text,kind=''){statusEl.textContent=text;statusEl.className='status '+kind}
+function makeDetector(){detector=new AR.Detector({dictionaryName:dictionaryEl.value});setStatus('Détection active','ok')}
 window.addEventListener('resize',resize);dictionaryEl.addEventListener('change',makeDetector);
 
 async function startCamera(){
  try{
   if(typeof AR==='undefined')throw new Error('MOTEUR_NON_CHARGE');if(!window.isSecureContext)throw new Error('PAGE_NON_SECURISEE');if(!navigator.mediaDevices?.getUserMedia)throw new Error('CAMERA_NON_DISPONIBLE');
-  statusEl.textContent='Autorisation…';statusEl.className='status warn';
+  setStatus('Autorisation…','warn');
   stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}},audio:false});
   video.srcObject=stream;await video.play();processing.width=640;processing.height=Math.max(360,Math.round(640*video.videoHeight/video.videoWidth));makeDetector();running=true;resize();
-  statusEl.textContent='Détection active';statusEl.className='status ok';stateEl.textContent='active';requestAnimationFrame(loop);
+  setStatus('Détection active','ok');requestAnimationFrame(loop);
  }catch(e){
   statusEl.className='status err';
-  if(e.message==='MOTEUR_NON_CHARGE'){statusEl.textContent='Moteur indisponible';document.getElementById('message').textContent='Le moteur ArUco n’a pas pu être téléchargé. Vérifie la connexion Internet puis recharge la page.'}
-  else if(e.message==='PAGE_NON_SECURISEE'){statusEl.textContent='Mode non sécurisé';document.getElementById('message').textContent='Ouvre la page via HTTPS.'}
-  else if(e.name==='NotAllowedError'){statusEl.textContent='Permission refusée';document.getElementById('message').textContent='Dans Chrome : Paramètres du site → Caméra → Autoriser, puis recharge la page.'}
-  else{statusEl.textContent='Erreur caméra';document.getElementById('message').textContent='Erreur : '+e.message}
+  if(e.message==='MOTEUR_NON_CHARGE')setStatus('Moteur indisponible — recharge la page','err');
+  else if(e.message==='PAGE_NON_SECURISEE')setStatus('Page HTTPS requise','err');
+  else if(e.name==='NotAllowedError')setStatus('Permission caméra refusée','err');
+  else setStatus('Erreur : '+e.message,'err');
  }
 }
-function stopCamera(){running=false;if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}video.srcObject=null;ctx.clearRect(0,0,canvas.clientWidth,canvas.clientHeight);stateEl.textContent='arrêtée';statusEl.textContent='Arrêtée';statusEl.className='status'}
+function stopCamera(){running=false;if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}video.srcObject=null;ctx.clearRect(0,0,canvas.clientWidth,canvas.clientHeight);setStatus('Arrêtée')}
 function centerOf(marker){return marker.corners.reduce((p,c)=>({x:p.x+c.x/4,y:p.y+c.y/4}),{x:0,y:0})}
 function screenTransform(){const vw=processing.width,vh=processing.height,cw=canvas.clientWidth,ch=canvas.clientHeight,scale=Math.max(cw/vw,ch/vh);return{scale,ox:(cw-vw*scale)/2,oy:(ch-vh*scale)/2}}
 function pointToScreen(p,t){return{x:t.ox+p.x*t.scale,y:t.oy+p.y*t.scale}}
@@ -79,13 +75,11 @@ function draw(markers){
  });
  let distanceText='—';
  if(centers.length>=2){const a=centers[0],b=centers[1],distance=Math.hypot(b.x-a.x,b.y-a.y);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.strokeStyle='#ffd400';ctx.lineWidth=3;ctx.stroke();const label=distance.toFixed(0)+' px',mx=(a.x+b.x)/2,my=(a.y+b.y)/2,w=ctx.measureText(label).width+12;ctx.fillStyle='#000d';ctx.fillRect(mx-w/2,my-24,w,24);ctx.fillStyle='#ffd400';ctx.fillText(label,mx-w/2+6,my-7);distanceText=label}
- document.getElementById('dist').textContent=distanceText;document.getElementById('count').textContent=markers.length;
- const box=document.getElementById('tags');box.innerHTML='';markers.forEach((m,i)=>{const c=centers[i],el=document.createElement('div');el.className='tag';el.textContent=`Tag ID ${m.id} — centre X ${c.x.toFixed(0)} px, Y ${c.y.toFixed(0)} px`;box.appendChild(el)});
 }
 function loop(now){
  if(!running)return;
- if(video.readyState>=2&&now-lastDetection>=80){lastDetection=now;pctx.drawImage(video,0,0,processing.width,processing.height);try{draw(detector.detect(pctx.getImageData(0,0,processing.width,processing.height)))}catch(e){statusEl.textContent='Erreur de détection';statusEl.className='status err';document.getElementById('message').textContent=e.message}frames++}
- if(now-lastFps>=1000){document.getElementById('fps').textContent=frames+' FPS';frames=0;lastFps=now}requestAnimationFrame(loop);
+ if(video.readyState>=2&&now-lastDetection>=80){lastDetection=now;pctx.drawImage(video,0,0,processing.width,processing.height);try{draw(detector.detect(pctx.getImageData(0,0,processing.width,processing.height)))}catch(e){setStatus('Erreur de détection','err')}frames++}
+ if(now-lastFps>=1000){frames=0;lastFps=now}requestAnimationFrame(loop);
 }
 document.getElementById('start').onclick=startCamera;document.getElementById('stop').onclick=stopCamera;
 </script>
