@@ -32,12 +32,12 @@
   document.addEventListener('click',async function(event){
     if(event.target!==start||window.__arModuleReady)return;
     event.preventDefault();event.stopImmediatePropagation();
-    if(stream){message('Camera ouverte · chargement AR impossible, verifiez Internet');return}
+    if(stream){message('Camera ouverte - chargement AR impossible, verifiez Internet');return}
     if(!window.isSecureContext||!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){message('Ouvrez ce lien HTTPS dans Chrome et autorisez la camera');return}
     try{
       stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'}}});
       video.srcObject=stream;await video.play();viewer.classList.add('camera-mode');
-      stop.hidden=false;start.textContent='Camera ouverte';message('Camera ouverte · le module AR ne s’est pas charge');
+      stop.hidden=false;start.textContent='Camera ouverte';message('Camera ouverte - le module AR ne s est pas charge');
     }catch(error){message(error.name==='NotAllowedError'?'Autorisez la camera dans les reglages Chrome':'Camera impossible: '+error.message)}
   },true);
   document.addEventListener('click',function(event){
